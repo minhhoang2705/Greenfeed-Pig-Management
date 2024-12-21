@@ -1,155 +1,187 @@
 import torch
 import cv2
 import numpy as np
+from ultralytics import YOLO
+from pathlib import Path
 import os
 
-# Fix Qt platform issue
-os.environ['QT_QPA_PLATFORM'] = 'offscreen'
-
 class PigDetector:
-    # COCO dataset class names
-    COCO_CLASSES = {
-        16: 'dog',
-        17: 'sheep',
-        19: 'cow',
-        20: 'elephant',
-        21: 'bear',
-        22: 'zebra'
-    }
-    def __init__(self, model_path='models/trained_pig_detector.pth', confidence_threshold=0.5, iou_threshold=0.4):
-        # Set CUDA device if available
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    def __init__(self, model_path='weights/best.pt', confidence_threshold=0.5, iou_threshold=0.4):
+        """
+        Initialize the PigDetector with YOLO model
+        Args:
+            model_path: Path to the trained YOLO model weights
+            confidence_threshold: Minimum confidence threshold for detections
+            iou_threshold: IoU threshold for NMS
+        """
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Using device: {self.device}")
         self.confidence_threshold = confidence_threshold
         self.iou_threshold = iou_threshold
         self.model = self._load_model(model_path)
-        if self.model is not None:
-            self.model.to(self.device).eval()
 
     def _load_model(self, model_path):
+        """
+        Load the YOLO model
+        Args:
+            model_path: Path to the model weights
+        Returns:
+            YOLO model instance
+        """
         try:
-            print("Loading YOLOv5s model...")
-            model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
+            if Path(model_path).exists():
+                print(f"Loading custom YOLO model from {model_path}...")
+                model = YOLO(model_path)
+            else:
+                print("Custom model not found, loading pretrained YOLO model...")
+                model = YOLO('yolov8n.pt')
+            
             # Configure model settings
-            model.conf = self.confidence_threshold  # Confidence threshold
-            model.iou = self.iou_threshold  # NMS IoU threshold
-            model.classes = None  # Detect all classes
+            model.conf = self.confidence_threshold
+            model.iou = self.iou_threshold
             return model
         except Exception as e:
             print(f"Error loading model: {e}")
             return None
 
-    def _preprocess_image(self, image):
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        image = cv2.resize(image, (640, 640))
-        image = image.transpose((2, 0, 1))
-        image = np.ascontiguousarray(image)
-        image = torch.from_numpy(image).float() / 255.0
-        return image.unsqueeze(0).to(self.device)
-
-    def _postprocess_detections(self, results):
-        filtered_detections = []
-        
-        # Access predictions from the Results object
-        if hasattr(results, 'pred') and len(results.pred) > 0:
-            predictions = results.pred[0]
-            
-            # Convert predictions to numpy for processing
-            if predictions is not None:
-                predictions = predictions.cpu().numpy()
-                
-                for pred in predictions:
-                    *xyxy, conf, cls = pred
-                    # Look for animals in COCO dataset (including class 16-dog, 17-sheep, 19-cow, etc.)
-                    if conf >= self.confidence_threshold and int(cls) in [16, 17, 19, 20, 21, 22]:
-                        filtered_detections.append({
-                            'bbox': [int(x) for x in xyxy],
-                            'confidence': float(conf),
-                            'class': int(cls)
-                        })
-        
-        return filtered_detections
-
     def detect(self, image):
+        """
+        Detect pigs in the image
+        Args:
+            image: Input image (BGR format)
+        Returns:
+            List of detections, each containing bbox coordinates, confidence, and class
+        """
         if self.model is None:
             print("Model not loaded.")
             return []
         
         try:
-            # Use the model's built-in preprocessing
-            results = self.model(image)
-            return self._postprocess_detections(results)
+            # Run inference
+            results = self.model(image, verbose=False)[0]
+            detections = []
+            
+            # Process results
+            for r in results.boxes.data.tolist():
+                x1, y1, x2, y2, conf, cls = r
+                if conf >= self.confidence_threshold:
+                    detections.append({
+                        'bbox': [int(x1), int(y1), int(x2), int(y2)],
+                        'confidence': float(conf),
+                        'class': int(cls)
+                    })
+            
+            return detections
         except Exception as e:
             print(f"Error during detection: {str(e)}")
             return []
 
     def count_pigs(self, image):
+        """
+        Count the number of pigs in the image
+        Args:
+            image: Input image
+        Returns:
+            Number of pigs detected
+        """
         detections = self.detect(image)
         return len(detections)
 
-if __name__ == '__main__':
-    import os
-    
-    # Create results directory if it doesn't exist
+    def visualize_detections(self, image, detections):
+        """
+        Draw bounding boxes and labels on the image
+        Args:
+            image: Input image
+            detections: List of detections
+        Returns:
+            Annotated image
+        """
+        img_copy = image.copy()
+        
+        for detection in detections:
+            bbox = detection['bbox']
+            conf = detection['confidence']
+            
+            # Draw bounding box
+            cv2.rectangle(img_copy, 
+                         (bbox[0], bbox[1]), 
+                         (bbox[2], bbox[3]), 
+                         (0, 255, 0), 2)
+            
+            # Add label with confidence score
+            label = f"Pig: {conf:.2f}"
+            (label_width, label_height), _ = cv2.getTextSize(
+                label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+            
+            # Draw label background
+            cv2.rectangle(img_copy, 
+                         (bbox[0], bbox[1] - 25), 
+                         (bbox[0] + label_width, bbox[1]), 
+                         (0, 255, 0), -1)
+            
+            # Draw label text
+            cv2.putText(img_copy, label, 
+                       (bbox[0], bbox[1] - 5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+        
+        # Add total count
+        count = len(detections)
+        cv2.putText(img_copy, f'Total Pigs: {count}',
+                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        
+        return img_copy
+
+def demo():
+    """
+    Run a demo of the pig detector on sample images
+    """
+    # Create results directory
     results_dir = 'results/detections'
     os.makedirs(results_dir, exist_ok=True)
     
-    # Example usage with lower confidence threshold for testing
-    detector = PigDetector(confidence_threshold=0.3, iou_threshold=0.45)
+    # Initialize detector
+    detector = PigDetector(confidence_threshold=0.3)
     
-    # Process all images in the data/images directory
+    # Process images
     image_dir = 'data/images'
+    if not os.path.exists(image_dir):
+        print(f"Image directory not found: {image_dir}")
+        return
+    
     for image_file in sorted(os.listdir(image_dir)):
-        if not image_file.endswith('.png'):
+        if not image_file.lower().endswith(('.png', '.jpg', '.jpeg')):
             continue
             
         image_path = os.path.join(image_dir, image_file)
         print(f"\nProcessing {image_file}...")
         
         try:
+            # Read image
             image = cv2.imread(image_path)
             if image is None:
-                print(f"Could not read image file: {image_path}")
+                print(f"Could not read image: {image_path}")
                 continue
-
-            # Detect and count pigs
-            detections = detector.detect(image)
-            pig_count = detector.count_pigs(image)
-
-            # Print results
-            print(f"Number of animals detected: {pig_count}")
-            for detection in detections:
-                class_id = detection.get('class', -1)
-                print(f"  - Class: {class_id}, Bounding Box: {detection['bbox']}, Confidence: {detection['confidence']:.2f}")
-
-            # Draw bounding boxes on the image
-            for detection in detections:
-                bbox = detection['bbox']
-                class_id = detection['class']
-                class_name = PigDetector.COCO_CLASSES.get(class_id, f'class_{class_id}')
-                
-                # Different colors for different classes
-                color = (
-                    (0, 255, 0) if class_id == 19 else  # Green for cow
-                    (255, 0, 0) if class_id == 16 else  # Blue for dog
-                    (0, 0, 255)                         # Red for others
-                )
-                
-                # Draw bounding box
-                cv2.rectangle(image, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color, 2)
-                
-                # Add class name and confidence score
-                label = f"{class_name} {detection['confidence']:.2f}"
-                (label_width, label_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
-                cv2.rectangle(image, (bbox[0], bbox[1]-25), (bbox[0]+label_width, bbox[1]), color, -1)
-                cv2.putText(image, label, (bbox[0], bbox[1]-5),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
             
-            # Save the annotated image
+            # Detect pigs
+            detections = detector.detect(image)
+            print(f"Number of pigs detected: {len(detections)}")
+            
+            # Print detection details
+            for i, det in enumerate(detections, 1):
+                print(f"Pig {i}: Confidence: {det['confidence']:.2f}, "
+                      f"BBox: {det['bbox']}")
+            
+            # Visualize detections
+            result_image = detector.visualize_detections(image, detections)
+            
+            # Save result
             output_path = os.path.join(results_dir, f'detected_{image_file}')
-            cv2.imwrite(output_path, image)
+            cv2.imwrite(output_path, result_image)
             print(f"Saved detection result to: {output_path}")
-                
+            
         except Exception as e:
             print(f"Error processing {image_file}: {str(e)}")
             continue
+
+if __name__ == '__main__':
+    demo()
