@@ -5,19 +5,26 @@ from data_ingestion import create_data_loader
 from pig_detector import PigDetector
 import time
 import os
+import optuna
 
-def train_model(data_dir, annotation_file, model_path='yolov5s', num_epochs=10, batch_size=4, learning_rate=0.001):
+def train_model(trial, data_dir, annotation_file):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
+    # Define hyperparameters to be tuned
+    model_path = trial.suggest_categorical('model_path', ['yolov5s', 'yolov5m', 'yolov5l'])
+    num_epochs = trial.suggest_int('num_epochs', 5, 15)
+    batch_size = trial.suggest_categorical('batch_size', [4, 8, 16])
+    learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-3, log=True)
+
     dataloader = create_data_loader(data_dir, annotation_file, batch_size=batch_size)
+    # Load pre-trained YOLOv5 model
     model = torch.hub.load('ultralytics/yolov5', model_path, pretrained=True)
     model.to(device)
     
-    # Freeze all layers except the last one for transfer learning
+    # For transfer learning, we'll train the entire model but with a lower learning rate
     for param in model.parameters():
-        param.requires_grad = False
-    model.model[-1].requires_grad_(True)
+        param.requires_grad = True
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     criterion = nn.MSELoss() # Using MSE loss for bounding box regression
@@ -32,13 +39,33 @@ def train_model(data_dir, annotation_file, model_path='yolov5s', num_epochs=10, 
             labels = labels.to(device)
 
             optimizer.zero_grad()
-            outputs = model(images)
-            
-            # Assuming the output is a tuple, and the bounding box predictions are in the first element
-            predictions = outputs[0] if isinstance(outputs, tuple) else outputs
-            
-            # Calculate loss
-            loss = criterion(predictions, boxes)
+            # Train in autocast
+            with torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16):
+                outputs = model(images)
+                
+                # YOLOv5 model returns a list of predictions
+                if isinstance(outputs, (list, tuple)):
+                    # Get the first prediction tensor which contains detection results
+                    pred = outputs[0] if len(outputs) > 0 else outputs
+                else:
+                    pred = outputs
+                
+                # Convert predictions to the same format as ground truth boxes
+                # YOLOv5 outputs are in format [batch_size, num_predictions, 85] where 85 = 4(box) + 1(conf) + 80(class)
+                # We only need the box coordinates
+                if isinstance(pred, torch.Tensor) and len(pred.shape) == 3:
+                    # Extract bounding box coordinates
+                    pred_boxes = pred[..., :4]  # Get first 4 values (box coordinates)
+                    
+                    # Ensure boxes tensor is properly shaped and on the correct device
+                    if len(boxes.shape) == 2:
+                        boxes = boxes.unsqueeze(0)  # Add batch dimension if needed
+                    
+                    # Calculate loss only on box coordinates
+                    loss = criterion(pred_boxes, boxes.float())
+                else:
+                    # If predictions are not in expected format, skip this batch
+                    continue
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
@@ -51,9 +78,15 @@ def train_model(data_dir, annotation_file, model_path='yolov5s', num_epochs=10, 
     os.makedirs('models', exist_ok=True)
     torch.save(model.state_dict(), 'models/trained_pig_detector.pth')
     print("Training complete. Model saved to models/trained_pig_detector.pth")
+    return epoch_loss
+
+def objective(trial):
+    data_dir = '/home/minhtranh/works/pig_detection/data'
+    annotation_file = '/home/minhtranh/works/pig_detection/data/annotations.xml'
+    loss = train_model(trial, data_dir, annotation_file)
+    return loss
 
 if __name__ == '__main__':
-    # Example usage
-    data_dir = 'data' # Replace with your data directory
-    annotation_file = 'annotations.json' # Replace with your annotation file
-    train_model(data_dir, annotation_file)
+    study = optuna.create_study(direction='minimize')
+    study.optimize(objective, n_trials=10)
+    print("Best trial:", study.best_trial)

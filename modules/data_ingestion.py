@@ -5,25 +5,45 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
+import xml.etree.ElementTree as ET
 
 class PigDataset(Dataset):
     def __init__(self, data_dir, annotation_file=None, transform=None):
         self.data_dir = data_dir
-        self.image_files = [f for f in os.listdir(data_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+        self.image_dir = os.path.join(data_dir, 'images')
+        self.image_files = [f for f in os.listdir(self.image_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
         self.annotation_file = annotation_file
         self.annotations = self._load_annotations() if annotation_file else {}
         self.transform = transform
 
     def _load_annotations(self):
-        with open(self.annotation_file, 'r') as f:
-            return json.load(f)
+        annotations = {}
+        if self.annotation_file:
+            tree = ET.parse(self.annotation_file)
+            root = tree.getroot()
+            for image in root.findall('image'):
+                file_element = image.find('file')
+                if file_element is not None:
+                    image_name = file_element.text
+                    image_annotations = []
+                    if image_name in self.image_files:
+                        for box in image.findall('box'):
+                            xmin = int(box.find('xmin').text)
+                            ymin = int(box.find('ymin').text)
+                            xmax = int(box.find('xmax').text)
+                            ymax = int(box.find('ymax').text)
+                            bbox = [xmin, ymin, xmax, ymax]
+                            image_annotations.append({'bbox': bbox})
+                        annotations[image_name] = image_annotations
+        return annotations
 
     def __len__(self):
+        print(f"Number of images loaded: {len(self.image_files)}")
         return len(self.image_files)
 
     def __getitem__(self, idx):
         image_name = self.image_files[idx]
-        image_path = os.path.join(self.data_dir, image_name)
+        image_path = os.path.join(self.image_dir, image_name)
         image = Image.open(image_path).convert('RGB')
         
         boxes = []
