@@ -1,0 +1,9 @@
+batch: 128
+img: 640
+names:
+- pig
+nc: 1
+path: .
+test: ''
+train: coco/train2017
+val: coco/val2017
