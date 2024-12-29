@@ -1,0 +1,31 @@
+# Custom ByteTrack configuration optimized for pig tracking
+tracker_type: bytetrack
+
+# Detection parameters
+track_high_thresh: 0.4  # Higher threshold for initial detection
+track_low_thresh: 0.1   # Lower threshold for keeping tracks
+new_track_thresh: 0.3   # Threshold for new track initiation
+
+# Motion model parameters
+track_buffer: 60        # Number of frames to keep lost tracks
+match_thresh: 0.8       # Matching threshold for re-identification
+
+# Kalman filter parameters
+min_box_area: 10        # Minimum bounding box area to track
+aspect_ratio_thresh: 3.0 # Maximum aspect ratio variation
+min_hits: 3             # Minimum hits before track is confirmed
+max_age: 30             # Maximum frames to keep lost track
+
+# Pig-specific parameters
+max_speed: 50           # Maximum pixel movement between frames
+min_iou: 0.3            # Minimum IOU for track association
+reid_thresh: 0.7        # Re-identification confidence threshold
+
+# Occlusion handling
+occlusion_thresh: 0.5   # Threshold for detecting occlusions
+occlusion_buffer: 15    # Frames to keep occluded tracks
+
+# Appearance model
+use_reid: True          # Enable re-identification
+reid_model: osnet_ain   # Lightweight re-ID model
+reid_batch_size: 16     # Batch size for re-ID processing
