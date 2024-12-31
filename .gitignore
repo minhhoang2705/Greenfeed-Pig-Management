@@ -1,0 +1,7 @@
+*.zip
+*.pth
+data/boxes/
+data/images/
+results/
+logs/
+weights/
