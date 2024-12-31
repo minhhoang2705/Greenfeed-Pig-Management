@@ -9,7 +9,7 @@ from collections import defaultdict
 
 
 class PigDetector:
-    def __init__(self, model_path='/home/minhtranh/works/pig_detection/runs/detect/train7/weights/best.pt', confidence_threshold=0.5, iou_threshold=0.4):
+    def __init__(self, model_path='/home/minhtranh/works/pig_detection/pig_detection_project/experiment_24/weights/best.pt', confidence_threshold=0.5, iou_threshold=0.4):
         """
         Initialize the PigDetector with YOLO model and ByteTrack
         Args:

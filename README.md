@@ -1,74 +1,174 @@
-# Pig Detection and Counting System
+# Pig Detection System
 
-This project implements an AI-powered system for detecting and counting pigs in a farming environment. It includes modules for data acquisition, data ingestion, model training, and model deployment.
+This project provides a pig detection system using YOLO-based object detection and tracking. It consists of a FastAPI backend with Celery for asynchronous video processing and a Streamlit-based web interface.
 
-## Project Structure
-
--   `data_acquisition.py`: Captures images from a camera at regular intervals.
--   `data_ingestion.py`: Loads and preprocesses image data for model training.
--   `training_pipeline.py`: Trains the pig detection model using PyTorch.
--   `deployment.py`: Deploys the trained model for real-time pig detection and counting.
--   `pig_detector.py`: Contains the core pig detection logic using a pre-trained YOLOv5 model.
--   `requirements.txt`: Lists the required Python packages.
--   `models/`: Directory to store trained models.
--   `data/`: Directory to store captured images.
--   `annotations.json`: JSON file containing bounding box annotations for training images.
+## Features
+- Real-time pig detection in images and videos
+- Asynchronous video processing with Celery
+- REST API for easy integration
+- Streamlit-based web interface
 
 ## Setup
 
-1.  **Install Dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+### Prerequisites
+- Python 3.8+ (recommended to use pyenv for version management)
+- Redis server (version 6.0+)
+- CUDA-enabled GPU (optional but recommended for faster processing)
+- NVIDIA drivers and CUDA toolkit (if using GPU)
 
-2.  **Data Acquisition:**
-    -   Run `data_acquisition.py` to capture images from a camera.
-    ```bash
-    python data_acquisition.py
-    ```
-    -   Captured images will be saved in the `data/` directory.
+### Installation
 
-3.  **Data Annotation:**
-    -   Create a JSON file named `annotations.json` in the `pig_detection` directory.
-    -   The JSON file should contain annotations for each image in the following format:
-        ```json
-        {
-            "image_name.jpg": [
-                {"bbox": [x1, y1, x2, y2]},
-                {"bbox": [x1, y1, x2, y2]}
-            ],
-            "another_image.jpg": [
-                {"bbox": [x1, y1, x2, y2]}
-            ]
-        }
-        ```
-        -   `x1`, `y1` are the coordinates of the top-left corner of the bounding box.
-        -   `x2`, `y2` are the coordinates of the bottom-right corner of the bounding box.
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/yourusername/pig-detection.git
+   cd pig-detection
+   ```
 
-4.  **Model Training:**
-    -   Run `training_pipeline.py` to train the model.
-    ```bash
-    python training_pipeline.py
-    ```
-    -   The trained model will be saved in the `models/` directory as `trained_pig_detector.pth`.
+2. **Set up Python environment**:
+   ```bash
+   # Install pyenv (if not already installed)
+   curl https://pyenv.run | bash
 
-5.  **Model Deployment:**
-    -   Run `deployment.py` to perform inference on a test image.
-    ```bash
-    python deployment.py
-    ```
-    -   Replace `test_image.jpg` with the path to your test image.
+   # Install specific Python version
+   pyenv install 3.8.12
 
-## Usage
+   # Create virtual environment
+   python -m venv venv
+   source venv/bin/activate
+   ```
 
--   **Data Acquisition:** The `data_acquisition.py` script captures images from the specified camera and saves them to the `data/` directory.
--   **Data Ingestion:** The `data_ingestion.py` script loads images and their corresponding bounding box annotations from the `data/` directory and `annotations.json` file, respectively. It prepares the data for model training.
--   **Model Training:** The `training_pipeline.py` script trains the pig detection model using the provided data and saves the trained model to the `models/` directory.
--   **Model Deployment:** The `deployment.py` script loads the trained model and performs inference on a given image, displaying the bounding boxes and the number of detected pigs.
+3. **Install system dependencies**:
+   ```bash
+   # For Ubuntu/Debian
+   sudo apt-get install -y build-essential libssl-dev zlib1g-dev \
+   libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm \
+   libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev \
+   liblzma-dev python-openssl git redis-server
 
-## Notes
+   # For macOS
+   brew install openssl readline sqlite3 xz zlib redis
+   ```
 
--   Ensure that you have a camera connected to your system and that the camera ID is correctly set in `data_acquisition.py`.
--   The `annotations.json` file is required for training the model. You will need to manually annotate the images with bounding boxes.
--   The `training_pipeline.py` script uses transfer learning, freezing all layers except the last one.
--   The `deployment.py` script loads the trained model and performs inference on a given image.
+4. **Install Python dependencies**:
+   ```bash
+   pip install --upgrade pip setuptools wheel
+   pip install -r requirements.txt
+
+   # For GPU support (if available)
+   pip install torch torchvision --extra-index-url https://download.pytorch.org/whl/cu117
+   ```
+
+5. **Configure Redis**:
+   ```bash
+   # Start Redis server
+   redis-server --daemonize yes
+
+   # Verify Redis is running
+   redis-cli ping
+   ```
+
+6. **Set up environment variables**:
+   Create a `.env` file in the project root with:
+   ```bash
+   REDIS_URL=redis://localhost:6379/0
+   MODEL_PATH=weights/best.pt
+   ```
+
+7. **Download model weights**:
+   Place your trained YOLO model weights in the `weights/` directory
+
+## Running the Application
+
+### Start FastAPI Server
+```bash
+uvicorn api.app:app --reload --host 0.0.0.0 --port 8000
+```
+
+### Start Celery Worker
+```bash
+celery -A api.app.celery worker --loglevel=info --concurrency=4
+```
+
+### Start Streamlit UI
+```bash
+streamlit run frontend/ui.py
+```
+
+## Using the System
+
+### API Endpoints
+
+1. **Image Detection**:
+   ```bash
+   curl -X POST -F "file=@test_image.jpg" http://localhost:8000/detect/image
+   ```
+
+2. **Video Processing**:
+   ```bash
+   curl -X POST -F "file=@test_video.mp4" http://localhost:8000/detect/video
+   ```
+
+3. **Check Task Status**:
+   ```bash
+   curl http://localhost:8000/task/{task_id}
+   ```
+
+4. **Download Processed Video**:
+   ```bash
+   curl -o output.mp4 http://localhost:8000/download/{task_id}
+   ```
+
+### Web Interface
+Access the web interface at http://localhost:8501
+
+## Testing the System
+
+1. **Run unit tests**:
+   ```bash
+   pytest tests/
+   ```
+
+2. **Run integration tests**:
+   ```bash
+   python -m pytest tests/integration/
+   ```
+
+3. **Check system health**:
+   ```bash
+   curl http://localhost:8000/health
+   ```
+
+## Configuration
+
+The system can be configured through the following files:
+- `config.yaml`: Main configuration file
+- `modules/configs/config.yaml`: Model-specific configurations
+
+## Monitoring Tasks
+
+You can monitor the status of video processing tasks using the `/task/{task_id}` endpoint. The task will go through these states:
+1. PENDING: Task is queued
+2. STARTED: Processing has begun
+3. SUCCESS: Processing completed successfully
+4. FAILURE: Processing failed (check status for details)
+
+## Troubleshooting
+
+### Celery Worker Issues
+- Ensure Redis server is running
+- Verify Celery worker is started with correct application path
+- Check task names match between API and worker
+
+### GPU Acceleration
+- Install CUDA toolkit if using GPU
+- Verify PyTorch is using CUDA:
+  ```python
+  import torch
+  print(torch.cuda.is_available())
+  ```
+
+## Contributing
+Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+
+## License
+[MIT](https://choosealicense.com/licenses/mit/)
