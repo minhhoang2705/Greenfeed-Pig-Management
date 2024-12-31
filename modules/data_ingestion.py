@@ -5,53 +5,58 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
-import xml.etree.ElementTree as ET
-
 class PigDataset(Dataset):
     def __init__(self, data_dir, annotation_file=None, transform=None):
         self.data_dir = data_dir
-        self.image_dir = os.path.join(data_dir, 'images')
-        self.image_files = [f for f in os.listdir(self.image_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+        self.image_dir = os.path.join(data_dir, 'images', 'val2017')  # COCO validation set
         self.annotation_file = annotation_file
-        self.annotations = self._load_annotations() if annotation_file else {}
         self.transform = transform
+        
+        # Load COCO annotations
+        if annotation_file:
+            with open(annotation_file, 'r') as f:
+                self.coco_data = json.load(f)
+            
+            # Create image id to filename mapping
+            self.image_id_to_filename = {
+                img['id']: img['file_name'] for img in self.coco_data['images']
+            }
+            
+            # Create image id to annotations mapping
+            self.image_id_to_anns = {}
+            for ann in self.coco_data['annotations']:
+                img_id = ann['image_id']
+                if img_id not in self.image_id_to_anns:
+                    self.image_id_to_anns[img_id] = []
+                self.image_id_to_anns[img_id].append(ann)
+            
+            # Get list of image IDs that have annotations
+            self.image_ids = list(self.image_id_to_anns.keys())
+        else:
+            self.image_ids = []
+            self.coco_data = None
 
-    def _load_annotations(self):
-        annotations = {}
-        if self.annotation_file:
-            tree = ET.parse(self.annotation_file)
-            root = tree.getroot()
-            for image in root.findall('image'):
-                file_element = image.find('file')
-                if file_element is not None:
-                    image_name = file_element.text
-                    image_annotations = []
-                    if image_name in self.image_files:
-                        for box in image.findall('box'):
-                            xmin = int(box.find('xmin').text)
-                            ymin = int(box.find('ymin').text)
-                            xmax = int(box.find('xmax').text)
-                            ymax = int(box.find('ymax').text)
-                            bbox = [xmin, ymin, xmax, ymax]
-                            image_annotations.append({'bbox': bbox})
-                        annotations[image_name] = image_annotations
-        return annotations
+    def _load_image(self, image_id):
+        filename = self.image_id_to_filename[image_id]
+        image_path = os.path.join(self.image_dir, filename)
+        return Image.open(image_path).convert('RGB'), filename
 
     def __len__(self):
-        print(f"Number of images loaded: {len(self.image_files)}")
-        return len(self.image_files)
+        return len(self.image_ids)
 
     def __getitem__(self, idx):
-        image_name = self.image_files[idx]
-        image_path = os.path.join(self.image_dir, image_name)
-        image = Image.open(image_path).convert('RGB')
+        image_id = self.image_ids[idx]
+        image, image_name = self._load_image(image_id)
         
         boxes = []
         labels = []
-        if image_name in self.annotations:
-            for annotation in self.annotations[image_name]:
-                boxes.append(annotation['bbox'])
-                labels.append(0) # Assuming pig is class 0
+        if image_id in self.image_id_to_anns:
+            for ann in self.image_id_to_anns[image_id]:
+                # COCO bbox format is [x, y, width, height]
+                # Convert to [x1, y1, x2, y2] format
+                x, y, w, h = ann['bbox']
+                boxes.append([x, y, x + w, y + h])
+                labels.append(0)  # Assuming all objects are pigs (class 0)
 
         boxes = np.array(boxes, dtype=np.float32)
         labels = np.array(labels, dtype=np.int64)

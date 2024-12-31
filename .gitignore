@@ -1,7 +1,9 @@
 *.zip
 *.pth
-data/boxes/
-data/images/
 results/
 logs/
 weights/
+combined_dataset
+runs
+datasets
+pig_detection_project

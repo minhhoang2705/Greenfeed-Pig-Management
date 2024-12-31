@@ -1,0 +1,13 @@
+model_name: yolov8s  # or a path to a .pt file if you have a pre-trained checkpoint
+data_yaml: /home/minhtranh/works/pig_detection/combined_dataset/data.yaml
+epochs: 500  # Increased for potential better convergence
+batch_size: 32 # Adjust based on your GPU memory
+learning_rate: 0.001
+imgsz: 640
+patience: 75  # Increased early stopping patience
+save_period: 10
+cache: True
+amp: True
+optimizer: AdamW
+project: pig_detection_project # Optional: Project name
+name: experiment_2 # Optional: Experiment name
