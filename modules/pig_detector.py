@@ -55,111 +55,164 @@ class PigDetector:
             print(f"Error loading model: {e}")
             return None
 
-    def detect(self, image):
+    def detect(self, images):
         """
-        Detect pigs in the image
+        Detect pigs in a batch of images
         Args:
-            image: Input image (BGR format)
+            images: List of input images (BGR format)
         Returns:
-            List of detections, each containing bbox coordinates, confidence, and class
+            List of detection lists, each containing bbox coordinates, confidence, and class
         """
         if self.model is None:
             print("Model not loaded.")
-            return []
+            return [[] for _ in images]
 
-        if image is None or image.size == 0:
-            print("Invalid input image")
-            return []
+        # Filter out invalid images
+        valid_images = [img for img in images if img is not None and img.size > 0]
+        if not valid_images:
+            print("No valid images in batch")
+            return [[] for _ in images]
 
         try:
-            # Run inference
-            results = self.model(image, verbose=False)
-            if not results or len(results) == 0:
+            # Run batch inference
+            batch_results = self.model(valid_images, verbose=False)
+            if not batch_results:
                 print("No results from model inference")
-                return []
+                return [[] for _ in images]
 
-            result = results[0]  # Get first result
-            detections = []
+            all_detections = []
+            for result in batch_results:
+                detections = []
+                # Check if boxes attribute exists and has data
+                if hasattr(result, 'boxes') and len(result.boxes) > 0:
+                    # Process results
+                    for r in result.boxes.data.tolist():
+                        if len(r) >= 6:  # Ensure we have all required values
+                            x1, y1, x2, y2, conf, cls = r
+                            if conf >= self.confidence_threshold:
+                                detections.append({
+                                    'bbox': [int(x1), int(y1), int(x2), int(y2)],
+                                    'confidence': float(conf),
+                                    'class': int(cls)
+                                })
+                all_detections.append(detections)
 
-            # Check if boxes attribute exists and has data
-            if hasattr(result, 'boxes') and len(result.boxes) > 0:
-                # Process results
-                for r in result.boxes.data.tolist():
-                    if len(r) >= 6:  # Ensure we have all required values
-                        x1, y1, x2, y2, conf, cls = r
-                        if conf >= self.confidence_threshold:
-                            detections.append({
-                                'bbox': [int(x1), int(y1), int(x2), int(y2)],
-                                'confidence': float(conf),
-                                'class': int(cls)
-                            })
-            else:
-                print("No detections found in the image")
-
-            return detections
+            # Return detections in same order as input images
+            return all_detections
         except Exception as e:
             print(f"Error during detection: {str(e)}")
             return []
 
     def process_frame(self, image):
         """
-        Process a frame with detection and ByteTrack tracking
+        Process a single frame with detection and ByteTrack tracking
         Args:
             image: Input image
         Returns:
             Tuple of (detections, tracked_objects)
         """
-        if self.model is None or image is None:
-            return [], {}
+        return self.process_frames([image])[0]
 
-        # Run YOLO detection with tracking
-        results = self.model.track(
-            image, persist=True, verbose=False, tracker="bytetrack.yaml")
-        if not results or len(results) == 0:
-            return [], {}
+    def process_frames(self, images):
+        """
+        Process multiple frames with detection and ByteTrack tracking
+        Args:
+            images: List of input images
+        Returns:
+            List of tuples (detections, tracked_objects)
+        """
+        if self.model is None or not images:
+            return [([], {}) for _ in images]
 
-        result = results[0]
-        detections = []
-        tracked_objects = {}
+        # Filter valid images
+        valid_images = [img for img in images if img is not None and img.size > 0]
+        if not valid_images:
+            return [([], {}) for _ in images]
 
-        # Process tracked objects
-        if hasattr(result, 'boxes') and len(result.boxes) > 0:
-            for box in result.boxes:
-                # Get box data
-                box_data = box.data[0]
-                x1, y1, x2, y2, conf, cls = map(float, box_data[:6])
+        # Run batch inference with tracking
+        batch_results = self.model.track(
+            valid_images, persist=True, verbose=False, tracker="bytetrack.yaml")
+        if not batch_results:
+            return [([], {}) for _ in images]
 
-                # Get tracking ID
-                track_id = int(box.id[0]) if box.id is not None else None
+        all_results = []
+        for result in batch_results:
+            detections = []
+            tracked_objects = {}
 
-                detection = {
-                    'bbox': [int(x1), int(y1), int(x2), int(y2)],
-                    'confidence': float(conf),
-                    'class': int(cls),
-                    'track_id': track_id
-                }
-                detections.append(detection)
+            # Process tracked objects
+            if hasattr(result, 'boxes') and len(result.boxes) > 0:
+                for box in result.boxes:
+                    # Get box data
+                    box_data = box.data[0]
+                    x1, y1, x2, y2, conf, cls = map(float, box_data[:6])
 
-                if track_id is not None:
-                    tracked_objects[track_id] = detection
+                    # Get tracking ID
+                    track_id = int(box.id[0]) if box.id is not None else None
 
-                    # Update tracking history
-                    self.tracking_history[track_id].append({
-                        'frame_time': time.time(),
-                        'bbox': detection['bbox'],
-                        'confidence': detection['confidence']
-                    })
+                    detection = {
+                        'bbox': [int(x1), int(y1), int(x2), int(y2)],
+                        'confidence': float(conf),
+                        'class': int(cls),
+                        'track_id': track_id
+                    }
+                    detections.append(detection)
 
-                    # Update total count if new track
-                    if track_id not in self.active_tracks:
-                        self.total_count += 1
-                        self.active_tracks.add(track_id)
+                    if track_id is not None:
+                        tracked_objects[track_id] = detection
 
-            # Remove lost tracks
-            lost_tracks = set(self.active_tracks) - set(tracked_objects.keys())
-            self.active_tracks -= lost_tracks
+                        # Update tracking history
+                        self.tracking_history[track_id].append({
+                            'frame_time': time.time(),
+                            'bbox': detection['bbox'],
+                            'confidence': detection['confidence']
+                        })
 
-        return detections, tracked_objects
+                        # Update total count if new track
+                        if track_id not in self.active_tracks:
+                            self.total_count += 1
+                            self.active_tracks.add(track_id)
+
+                # Remove lost tracks
+                lost_tracks = set(self.active_tracks) - set(tracked_objects.keys())
+                self.active_tracks -= lost_tracks
+
+            all_results.append((detections, tracked_objects))
+
+        return all_results
+
+    def process_frames_parallel(self, images, max_workers=4):
+        """
+        Process multiple frames in parallel using ThreadPoolExecutor
+        Args:
+            images: List of input images
+            max_workers: Maximum number of parallel workers
+        Returns:
+            List of tuples (detections, tracked_objects)
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        # Split images into chunks for parallel processing
+        chunk_size = max(1, len(images) // max_workers)
+        image_chunks = [images[i:i + chunk_size] 
+                       for i in range(0, len(images), chunk_size)]
+
+        results = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Process each chunk in parallel
+            futures = [executor.submit(self.process_frames, chunk) 
+                      for chunk in image_chunks]
+            
+            # Collect results
+            for future in futures:
+                try:
+                    results.extend(future.result())
+                except Exception as e:
+                    print(f"Error processing frame chunk: {str(e)}")
+                    # Return empty results for failed chunks
+                    results.extend([([], {}) for _ in range(len(chunk))])
+
+        return results
 
     def visualize_detections(self, image, detections, tracked_objects=None):
         """
@@ -233,11 +286,13 @@ class PigDetector:
         return img_copy
 
 
-def demo(video_path=None):
+def demo(video_path=None, batch_size=16, max_workers=4):
     """
-    Run a demo of the pig detector on images or video
+    Run a demo of the pig detector on images or video with optimized processing
     Args:
         video_path: Path to video file (optional)
+        batch_size: Number of frames to process in each batch
+        max_workers: Maximum number of parallel workers for image processing
     """
     # Create results directory
     results_dir = 'results/detections'
@@ -265,32 +320,44 @@ def demo(video_path=None):
                       int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
         out = cv2.VideoWriter(output_path, fourcc, fps, frame_size)
 
+        # Buffer for batch processing
+        frame_buffer = []
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
+                # Process remaining frames in buffer
+                if frame_buffer:
+                    try:
+                        # Process batch
+                        batch_results = detector.process_frames(frame_buffer)
+                        for i, (detections, tracked_objects) in enumerate(batch_results):
+                            # Visualize and write each frame
+                            result_frame = detector.visualize_detections(
+                                frame_buffer[i], detections, tracked_objects)
+                            out.write(result_frame)
+                    except Exception as e:
+                        print(f"Error processing final batch: {str(e)}")
                 break
 
+            frame_buffer.append(frame)
             frame_count += 1
-            print(f"\nProcessing frame {frame_count}...")
 
-            try:
-                # Process frame
-                detections, tracked_objects = detector.process_frame(frame)
-                print(f"Number of pigs detected: {len(tracked_objects)}")
-
-                # Visualize detections
-                result_frame = detector.visualize_detections(
-                    frame, detections, tracked_objects)
-
-                # Write frame to output video
-                out.write(result_frame)
-
-                # Skip live preview in headless mode
-                pass
-
-            except Exception as e:
-                print(f"Error processing frame {frame_count}: {str(e)}")
-                continue
+            if len(frame_buffer) >= batch_size:
+                try:
+                    # Process batch
+                    batch_results = detector.process_frames(frame_buffer)
+                    for i, (detections, tracked_objects) in enumerate(batch_results):
+                        # Visualize and write each frame
+                        result_frame = detector.visualize_detections(
+                            frame_buffer[i], detections, tracked_objects)
+                        out.write(result_frame)
+                    
+                    # Clear buffer
+                    frame_buffer = []
+                    print(f"Processed frames {frame_count - batch_size + 1} to {frame_count}")
+                except Exception as e:
+                    print(f"Error processing batch: {str(e)}")
+                    continue
 
         cap.release()
         out.release()
@@ -304,22 +371,25 @@ def demo(video_path=None):
             print(f"Image directory not found: {image_dir}")
             return
 
-        for image_file in sorted(os.listdir(image_dir)):
-            if not image_file.lower().endswith(('.png', '.jpg', '.jpeg')):
-                continue
+        # Get all image paths
+        image_files = [f for f in sorted(os.listdir(image_dir)) 
+                      if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+        if not image_files:
+            print("No valid images found in directory")
+            return
 
-            image_path = os.path.join(image_dir, image_file)
-            print(f"\nProcessing {image_file}...")
-
-            try:
-                # Read image
-                image = cv2.imread(image_path)
-                if image is None:
-                    print(f"Could not read image: {image_path}")
-                    continue
-
-                # Process frame
-                detections, tracked_objects = detector.process_frame(image)
+        # Process images in parallel
+        try:
+            # Read all images
+            images = [cv2.imread(os.path.join(image_dir, f)) for f in image_files]
+            
+            # Process in parallel
+            results = detector.process_frames_parallel(images, max_workers=max_workers)
+            
+            # Save results
+            for i, (detections, tracked_objects) in enumerate(results):
+                image_file = image_files[i]
+                print(f"\nProcessing {image_file}...")
                 print(f"Number of pigs detected: {len(tracked_objects)}")
 
                 # Print detection details
@@ -330,7 +400,7 @@ def demo(video_path=None):
 
                 # Visualize detections
                 result_image = detector.visualize_detections(
-                    image, detections, tracked_objects)
+                    images[i], detections, tracked_objects)
 
                 # Save result
                 output_path = os.path.join(
@@ -338,9 +408,8 @@ def demo(video_path=None):
                 cv2.imwrite(output_path, result_image)
                 print(f"Saved detection result to: {output_path}")
 
-            except Exception as e:
-                print(f"Error processing {image_file}: {str(e)}")
-                continue
+        except Exception as e:
+            print(f"Error processing images: {str(e)}")
 
 
 if __name__ == '__main__':
