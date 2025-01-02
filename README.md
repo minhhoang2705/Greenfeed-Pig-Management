@@ -100,22 +100,25 @@ streamlit run frontend/ui.py
 
 1. **Image Detection**:
    ```bash
-   curl -X POST -F "file=@test_image.jpg" http://localhost:8000/detect/image
+   curl -X POST -F "file=@test_image.jpg" http://localhost:8000/api/v1/detect/image
    ```
 
 2. **Video Processing**:
    ```bash
-   curl -X POST -F "file=@test_video.mp4" http://localhost:8000/detect/video
+   curl -X POST -F "file=@test_video.avi" http://localhost:8000/api/v1/detect/video
    ```
 
-3. **Check Task Status**:
+3. **Get Result File**:
    ```bash
-   curl http://localhost:8000/task/{task_id}
+   # For images
+   curl -o result.jpg http://localhost:8000/api/v1/results/result_image_YYYYMMDD_HHMMSS.jpg
+   # For videos
+   curl -o result.avi http://localhost:8000/api/v1/results/result_video_YYYYMMDD_HHMMSS.avi
    ```
 
-4. **Download Processed Video**:
+4. **Check API Health**:
    ```bash
-   curl -o output.mp4 http://localhost:8000/download/{task_id}
+   curl http://localhost:8000/api/v1/health
    ```
 
 ### Web Interface

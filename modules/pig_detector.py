@@ -113,9 +113,9 @@ class PigDetector:
         """
         return self.process_frames([image])[0]
 
-    def process_frames(self, images):
+    def process_frames_sequential(self, images):
         """
-        Process multiple frames with detection and ByteTrack tracking
+        Process multiple frames sequentially with detection and ByteTrack tracking
         Args:
             images: List of input images
         Returns:
@@ -313,8 +313,8 @@ def demo(video_path=None, batch_size=16, max_workers=4):
             return
 
         frame_count = 0
-        output_path = os.path.join(results_dir, 'output_video.mp4')
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        output_path = os.path.join(results_dir, 'output_video.avi')  # Using .avi extension for XVID codec
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')
         fps = cap.get(cv2.CAP_PROP_FPS)
         frame_size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
                       int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
@@ -329,7 +329,7 @@ def demo(video_path=None, batch_size=16, max_workers=4):
                 if frame_buffer:
                     try:
                         # Process batch
-                        batch_results = detector.process_frames(frame_buffer)
+                        batch_results = detector.process_frames_sequential(frame_buffer)
                         for i, (detections, tracked_objects) in enumerate(batch_results):
                             # Visualize and write each frame
                             result_frame = detector.visualize_detections(
@@ -345,7 +345,7 @@ def demo(video_path=None, batch_size=16, max_workers=4):
             if len(frame_buffer) >= batch_size:
                 try:
                     # Process batch
-                    batch_results = detector.process_frames(frame_buffer)
+                    batch_results = detector.process_frames_sequential(frame_buffer)
                     for i, (detections, tracked_objects) in enumerate(batch_results):
                         # Visualize and write each frame
                         result_frame = detector.visualize_detections(
