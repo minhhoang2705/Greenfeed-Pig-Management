@@ -138,10 +138,17 @@ async def process_image(
         # Log basic info about the received data
         logger.info(
             f"Received image data: {len(contents)} bytes, content type: {file.content_type}")
+        
+        # Save raw contents to debug file
+        debug_path = Path("debug_upload.bin")
+        with debug_path.open("wb") as f:
+            f.write(contents)
+        logger.info(f"Saved raw upload data to {debug_path}")
 
         try:
             # Convert to numpy array and validate
             nparr = np.frombuffer(contents, np.uint8)
+            logger.info(f"Created numpy array of size {nparr.size} bytes")
             if nparr.size == 0:
                 logger.error(
                     "Failed to convert image data to numpy array - empty buffer")
@@ -159,28 +166,48 @@ async def process_image(
                     detail="Invalid image data - file size too small"
                 )
 
-            # Decode image with error handling
+            # Validate numpy array before decoding
+            if nparr.size < 100:  # Minimum expected size for an image
+                logger.error(
+                    f"Invalid image data size: {nparr.size} bytes")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid image data - file size too small"
+                )
+
+            # Decode image with detailed error handling
             try:
+                logger.info(f"Attempting to decode image with OpenCV, buffer size: {nparr.size} bytes")
                 image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                 if image is None:
                     logger.error(
                         f"Failed to decode image. File size: {len(contents)} bytes, numpy array size: {nparr.size}")
                     raise HTTPException(
                         status_code=400,
-                        detail="Could not decode image. Please ensure it's a valid image file."
+                        detail="Could not decode image. The file may be corrupted or in an unsupported format."
                     )
-            except Exception as decode_error:
-                logger.error(f"Image decoding failed: {str(decode_error)}")
+                
+                # Validate decoded image dimensions
+                if image.size == 0 or image.shape[0] == 0 or image.shape[1] == 0:
+                    logger.error(
+                        f"Invalid image dimensions after decoding: {image.shape}")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid image dimensions after decoding. The file may be corrupted."
+                    )
+                    
+                logger.info(f"Successfully decoded image with dimensions: {image.shape}")
+            except cv2.error as cv_error:
+                logger.error(f"OpenCV decoding error: {str(cv_error)}")
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Image decoding failed: {str(decode_error)}"
+                    detail=f"Image decoding failed: {str(cv_error)}"
                 )
-            if image is None:
-                logger.error(
-                    f"Failed to decode image. File size: {len(contents)} bytes, numpy array size: {nparr.size}")
+            except Exception as decode_error:
+                logger.error(f"Unexpected decoding error: {str(decode_error)}")
                 raise HTTPException(
                     status_code=400,
-                    detail="Could not decode image. Please ensure it's a valid image file."
+                    detail=f"Unexpected error during image decoding: {str(decode_error)}"
                 )
 
             # Log successful decoding
@@ -194,7 +221,7 @@ async def process_image(
             )
 
         # Process image using detector
-        detections, tracked_objects = pig_detector.process_single_frame(image)
+        detections, tracked_objects = pig_detector.process_frame(image)
 
         # Visualize results
         result_image = pig_detector.visualize_detections(
@@ -282,9 +309,19 @@ async def process_video(
         # Initialize video writer with MP4V codec for better compatibility
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(str(result_path), fourcc, fps, (width, height))
+        
+        # Verify video writer initialization
+        if not out.isOpened():
+            logger.error(f"Failed to initialize video writer for {result_path}")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to initialize video writer. Check codec support."
+            )
+        logger.info(f"Successfully initialized video writer for {result_path}")
 
         frame_count = 0
         total_detections = 0
+        write_errors = 0
 
         # Process frames
         while cap.isOpened():
@@ -293,20 +330,46 @@ async def process_video(
                 break
 
             # Process frame
-            detections, tracked_objects = pig_detector.process_single_frame(
+            detections, tracked_objects = pig_detector.process_frame(
                 frame)
 
             # Visualize and save frame
             result_frame = pig_detector.visualize_detections(
                 frame, detections, tracked_objects)
-            out.write(result_frame)
-
+            
+            # Write frame with error checking
+            if not out.write(result_frame):
+                write_errors += 1
+                logger.warning(f"Failed to write frame {frame_count} to video")
+            else:
+                logger.debug(f"Successfully wrote frame {frame_count}")
+            
             frame_count += 1
             total_detections += len(tracked_objects)
 
         # Clean up
         cap.release()
         out.release()
+        
+        # Verify video file was created
+        if not result_path.exists():
+            logger.error(f"Failed to create output video at {result_path}")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create output video file"
+            )
+            
+        # Verify video file size
+        file_size = result_path.stat().st_size
+        if file_size < 1024:  # Minimum expected size for a video
+            logger.error(f"Output video file too small: {file_size} bytes")
+            result_path.unlink()  # Remove invalid file
+            raise HTTPException(
+                status_code=500,
+                detail="Output video file is invalid or corrupted"
+            )
+            
+        logger.info(f"Successfully created output video: {result_path} ({file_size} bytes)")
         temp_path.unlink()  # Remove temporary file
 
         processing_time = (datetime.now() - start_time).total_seconds()

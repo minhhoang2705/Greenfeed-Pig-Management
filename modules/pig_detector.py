@@ -107,11 +107,26 @@ class PigDetector:
         """
         Process a single frame with detection and ByteTrack tracking
         Args:
-            image: Input image
+            image: Input image (numpy array)
         Returns:
-            Tuple of (detections, tracked_objects)
+            Tuple of (detections, tracked_objects) where:
+                detections: List of detection dictionaries
+                tracked_objects: Dictionary of tracked objects with IDs as keys
+        Raises:
+            ValueError: If input image is invalid
         """
-        return self.process_frames([image])[0]
+        if not isinstance(image, np.ndarray) or image.size == 0:
+            raise ValueError("Invalid input image")
+            
+        try:
+            # Process single frame using sequential processing
+            results = self.process_frames_sequential([image])
+            if results:
+                return results[0]
+            return [], {}
+        except Exception as e:
+            print(f"Error processing frame: {str(e)}")
+            return [], {}
 
     def process_frames_sequential(self, images):
         """

@@ -182,8 +182,13 @@ class PigDetectionUI:
                 
                 if result["result_path"].endswith((".jpg", ".jpeg", ".png")):
                     st.image(result_url, caption="Detection Result", use_column_width=True)
-                elif result["result_path"].endswith(".avi"):
-                    st.video(result_url, format="video/x-msvideo")
+                elif result["result_path"].endswith(".mp4"):
+                    # Use requests to fetch the video data
+                    response = requests.get(result_url, stream=True)
+                    if response.status_code == 200:
+                        st.video(response.content, format="video/mp4")
+                    else:
+                        st.error(f"Failed to fetch video: {response.status_code}")
                     
             except Exception as e:
                 st.error(f"Error displaying result: {str(e)}")
