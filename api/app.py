@@ -322,12 +322,23 @@ async def process_video(
         frame_count = 0
         total_detections = 0
         write_errors = 0
+        last_frame_time = datetime.now()
 
         # Process frames
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
+                logger.info(f"Reached end of video at frame {frame_count}")
                 break
+
+            # Log frame reading details
+            current_time = datetime.now()
+            time_since_last_frame = (current_time - last_frame_time).total_seconds()
+            last_frame_time = current_time
+            
+            logger.info(f"Processing frame {frame_count} - "
+                       f"Time since last frame: {time_since_last_frame:.3f}s - "
+                       f"Frame shape: {frame.shape}")
 
             # Process frame
             detections, tracked_objects = pig_detector.process_frame(
@@ -342,10 +353,20 @@ async def process_video(
                 write_errors += 1
                 logger.warning(f"Failed to write frame {frame_count} to video")
             else:
-                logger.debug(f"Successfully wrote frame {frame_count}")
+                logger.info(f"Successfully wrote frame {frame_count} - "
+                          f"Frame size: {result_frame.size} bytes - "
+                          f"Frame shape: {result_frame.shape}")
             
             frame_count += 1
             total_detections += len(tracked_objects)
+
+            # Log processing rate every 10 frames
+            if frame_count % 10 == 0:
+                elapsed_time = (datetime.now() - start_time).total_seconds()
+                processing_rate = frame_count / elapsed_time
+                logger.info(f"Processing rate: {processing_rate:.2f} FPS - "
+                          f"Total frames: {frame_count} - "
+                          f"Write errors: {write_errors}")
 
         # Clean up
         cap.release()
