@@ -3,8 +3,10 @@ services:
     build: .
     ports:
       - "8001:8000"  # FastAPI
+    environment:
+      - DOCKER_ENV=true
     volumes:
-      - ./weights:/app/weights
+      - /home/minhtranh/works/pig_detection/pig_detection_project/experiment_24/weights/best.pt:/app/weights/best.pt
       - ./results:/app/results
     deploy:
       resources:
