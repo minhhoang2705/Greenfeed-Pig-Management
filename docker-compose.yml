@@ -1,0 +1,15 @@
+services:
+  pig-detection:
+    build: .
+    ports:
+      - "8001:8000"  # FastAPI
+    volumes:
+      - ./weights:/app/weights
+      - ./results:/app/results
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

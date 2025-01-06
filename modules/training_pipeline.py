@@ -1,59 +1,101 @@
 import torch
-import torch.optim as optim
-import torch.nn as nn
-from data_ingestion import create_data_loader
-from pig_detector import PigDetector
-import time
 import os
+from ultralytics import YOLO
+import logging
+import yaml
 
-def train_model(data_dir, annotation_file, model_path='yolov5s', num_epochs=10, batch_size=4, learning_rate=0.001):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+# Configure logging
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 
-    dataloader = create_data_loader(data_dir, annotation_file, batch_size=batch_size)
-    model = torch.hub.load('ultralytics/yolov5', model_path, pretrained=True)
-    model.to(device)
-    
-    # Freeze all layers except the last one for transfer learning
-    for param in model.parameters():
-        param.requires_grad = False
-    model.model[-1].requires_grad_(True)
+def load_config(config_path):
+    """
+    Load configuration from a YAML file.
 
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    criterion = nn.MSELoss() # Using MSE loss for bounding box regression
+    Args:
+        config_path (str): Path to the YAML configuration file.
 
-    for epoch in range(num_epochs):
-        model.train()
-        epoch_loss = 0.0
-        start_time = time.time()
-        for images, boxes, labels, _ in dataloader:
-            images = images.to(device)
-            boxes = boxes.to(device)
-            labels = labels.to(device)
+    Returns:
+        dict: Configuration dictionary.
+    """
+    try:
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        return config
+    except Exception as e:
+        logging.error(f"Error loading config file: {e}")
+        return {}
 
-            optimizer.zero_grad()
-            outputs = model(images)
-            
-            # Assuming the output is a tuple, and the bounding box predictions are in the first element
-            predictions = outputs[0] if isinstance(outputs, tuple) else outputs
-            
-            # Calculate loss
-            loss = criterion(predictions, boxes)
-            loss.backward()
-            optimizer.step()
-            epoch_loss += loss.item()
-        
-        end_time = time.time()
-        epoch_loss /= len(dataloader)
-        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {epoch_loss:.4f}, Time: {end_time - start_time:.2f}s")
+def train_model(config_path='/home/minhtranh/works/pig_detection/modules/configs/config.yaml'):
+    """
+    Trains a YOLOv8 model based on the provided configuration.
 
-    # Save the trained model
-    os.makedirs('models', exist_ok=True)
-    torch.save(model.state_dict(), 'models/trained_pig_detector.pth')
-    print("Training complete. Model saved to models/trained_pig_detector.pth")
+    Args:
+        config_path (str): Path to the configuration file.
+    """
+    config = load_config(config_path)
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    logging.info(f"Using device: {device}")
+
+    # Load model
+    model_name = config.get('model_name', 'yolov8s.pt')
+    if model_name.endswith('.pt'):
+      model = YOLO(model_name)
+    else:
+      model = YOLO(f'{model_name}.pt')
+
+    # Training hyperparameters
+    data_yaml = config.get('data_yaml', '/home/minhtranh/works/pig_detection/combined_dataset/data.yaml')
+    epochs = config.get('epochs', 100)
+    batch_size = config.get('batch_size', 32)
+    learning_rate = config.get('learning_rate', 1e-3)
+    imgsz = config.get('imgsz', 640)
+    patience = config.get('patience', 50)
+    save_period = config.get('save_period', 10)
+    cache = config.get('cache', True)
+    amp = config.get('amp', True)
+    optimizer = config.get('optimizer', 'AdamW')
+    project = config.get('project', None) # Default project name
+    name = config.get('name', None)  # Default experiment name
+
+    logging.info("Starting training with YOLOv8...")
+    logging.info(f"Training configuration:")
+    logging.info(f"- Model: {model_name}")
+    logging.info(f"- Data YAML: {data_yaml}")
+    logging.info(f"- Epochs: {epochs}")
+    logging.info(f"- Batch size: {batch_size}")
+    logging.info(f"- Learning rate: {learning_rate}")
+    logging.info(f"- Image size: {imgsz}")
+    logging.info(f"- Device: {device}")
+
+    # Train the model
+    try:
+        results = model.train(
+            data=data_yaml,
+            epochs=epochs,
+            batch=batch_size,
+            lr0=learning_rate,
+            device=device,
+            imgsz=imgsz,
+            patience=patience,
+            save_period=save_period,
+            cache=cache,
+            amp=amp,
+            optimizer=optimizer,
+            project=project,
+            name=name
+        )
+        logging.info("Training complete!")
+
+        # Validate the model
+        logging.info("Running validation...")
+        val_results = model.val(data=data_yaml, device=device, imgsz=imgsz)
+
+        return results, val_results
+    except Exception as e:
+        logging.error(f"Training error: {e}")
+        return None, None
 
 if __name__ == '__main__':
-    # Example usage
-    data_dir = 'data' # Replace with your data directory
-    annotation_file = 'annotations.json' # Replace with your annotation file
-    train_model(data_dir, annotation_file)
+    train_model()

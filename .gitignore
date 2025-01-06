@@ -1,0 +1,9 @@
+*.zip
+*.pth
+results/
+logs/
+weights/
+combined_dataset
+runs
+datasets
+pig_detection_project
