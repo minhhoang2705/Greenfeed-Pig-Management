@@ -309,13 +309,24 @@ async def process_video(
                     f"FPS: {fps}, Frame count: {frame_count_input}, "
                     f"Duration: {duration:.2f}s")
 
-        # Initialize the VideoWriter
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        writer = cv2.VideoWriter(str(result_path), fourcc, fps, (width, height))
-        if not writer.isOpened():
+        # Try H264 codec first, fallback to MP4V if unavailable
+        try:
+            fourcc = cv2.VideoWriter_fourcc(*'H264')
+            writer = cv2.VideoWriter(str(result_path), fourcc, fps, (width, height))
+            if not writer.isOpened():
+                logger.warning("H264 codec not available, falling back to MP4V")
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                writer = cv2.VideoWriter(str(result_path), fourcc, fps, (width, height))
+                if not writer.isOpened():
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Failed to initialize video writer with both H264 and MP4V codecs."
+                    )
+        except Exception as e:
+            logger.error(f"Video writer initialization error: {str(e)}")
             raise HTTPException(
                 status_code=500,
-                detail="Failed to initialize video writer."
+                detail=f"Video writer initialization failed: {str(e)}"
             )
 
         frame_count = 0
