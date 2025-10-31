@@ -242,9 +242,9 @@ async def process_image(
             status="success",
             message=f"Successfully processed image. Detected {len(tracked_objects)} pigs.",
             result_path=result_path,
-            detection_count=len(tracked_objects),
+            # detection_count=len(tracked_objects),
             processing_time=processing_time,
-            tracked_objects=tracked_objects
+            # tracked_objects=tracked_objects
         )
 
     except Exception as e:
@@ -320,9 +320,10 @@ async def process_video(
         logger.info(f"Successfully initialized video writer for {result_path}")
 
         frame_count = 0
-        total_detections = 0
         write_errors = 0
-
+        unique_pig_ids = set()  # Track unique pig IDs
+        frame_detections = {}   # Track detections per frame
+        
         # Process frames
         while cap.isOpened():
             ret, frame = cap.read()
@@ -330,23 +331,54 @@ async def process_video(
                 break
 
             # Process frame
-            detections, tracked_objects = pig_detector.process_frame(
-                frame)
-
+            detections, tracked_objects = pig_detector.process_frame(frame)
+            
+            # Store frame detection information
+            frame_detections[frame_count] = {
+                'count': len(tracked_objects),
+                'ids': set(tracked_objects.keys()) if isinstance(tracked_objects, dict) else set()
+            }
+            
+            # Add unique pig IDs to the set
+            if isinstance(tracked_objects, dict):
+                unique_pig_ids.update(tracked_objects.keys())
+            
             # Visualize and save frame
             result_frame = pig_detector.visualize_detections(
                 frame, detections, tracked_objects)
             
-            # Write frame with error checking
-            if not out.write(result_frame):
+            # Write frame with enhanced error checking
+            try:
+                if not out.write(result_frame):
+                    write_errors += 1
+                    logger.warning(f"Failed to write frame {frame_count} to video")
+                    if write_errors > 10:
+                        logger.error("Multiple consecutive frame write failures - attempting to reinitialize writer")
+                        out.release()
+                        out = cv2.VideoWriter(str(result_path), fourcc, fps, (width, height))
+                        if not out.isOpened():
+                            raise RuntimeError("Could not reinitialize video writer")
+                        write_errors = 0
+                else:
+                    logger.debug(f"Successfully wrote frame {frame_count}")
+            except Exception as frame_error:
+                logger.error(f"Error writing frame {frame_count}: {str(frame_error)}")
                 write_errors += 1
-                logger.warning(f"Failed to write frame {frame_count} to video")
-            else:
-                logger.debug(f"Successfully wrote frame {frame_count}")
+                if write_errors > 10:
+                    raise RuntimeError(f"Multiple frame write errors: {str(frame_error)}")
             
             frame_count += 1
-            total_detections += len(tracked_objects)
 
+        # Calculate statistics
+        total_unique_pigs = len(unique_pig_ids)
+        avg_detections_per_frame = sum(frame['count'] for frame in frame_detections.values()) / frame_count if frame_count > 0 else 0
+        
+        # Log detection statistics
+        logger.info(f"Video Processing Statistics:")
+        logger.info(f"Total frames processed: {frame_count}")
+        logger.info(f"Total unique pigs detected: {total_unique_pigs}")
+        logger.info(f"Average detections per frame: {avg_detections_per_frame:.2f}")
+        
         # Clean up
         cap.release()
         out.release()
@@ -383,7 +415,7 @@ async def process_video(
             status="success",
             message=f"Successfully processed video. Processed {frame_count} frames.",
             result_path=str(result_path),
-            detection_count=total_detections,
+            detection_count=total_unique_pigs,
             processing_time=processing_time
         )
 
